@@ -5,62 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="robots" content="noindex, nofollow">
-  <meta htt-equiv="Content-Security-Policy" content="default-src 'self' https://unpkg.com https://telegram.org; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://telegram.org;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://unpkg.com https://telegram.org; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://telegram.org;">
   <title>Чат</title>
-  <!-- Подключение Tailwind CSS 4.0 через UNPKG -->
-  <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
-  <style type="text/tailwindcss">
-
-    @theme {
-      --color-black: #1a1a1a;
-      --color-gray: #4a4a4a;
-      --color-light-gray: #d1d1d1;
-      --color-white: #ffffff;
-      --border-width-2: 2px;
-      --border-width-6: 6px;
-      --spacing-2: 8px;
-      --spacing-3: 12px;
-      --spacing-5: 20px;
-      --font-size-base: 16px;
-      --font-mono: "Courier New", monospace;
-    }
-
-    @layer base {
-      * {
-        @apply m-0 p-0 box-border;
-      }
-
-      body {
-        @apply font-[var(--font-mono)] bg-[var(--color-white)] text-[var(--color-black)] leading-relaxed;
-        -webkit-font-smoothing: none;
-        overscroll-behavior: none;
-      }
-    }
-
+  <!-- Подключение Tailwind CSS через CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
     @keyframes blink {
       0%, 100% { opacity: 0.2; }
       50% { opacity: 1; }
     }
   </style>
-  <!-- Подключение Telegram Mini App SDK через CDN -->
+  <!-- Подключение Telegram Mini App SDK через CDN (опционально) -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <!-- Подключение Axios через CDN -->
   <script src="https://unpkg.com/axios@1.6.7/dist/axios.min.js"></script>
+  <!-- Подключение Mithril через CDN -->
+  <script src="https://unpkg.com/mithril@2.2.2/mithril.min.js"></script>
 </head>
 <body>
   <div id="app"></div>
 
   <script type="module">
-    import m from 'https://unpkg.com/mithril@2.2.2/mithril.min.js';
-
     const ChatModel = {
-      API_URL: '/api/messages',
+      API_URL: 'https://jsonplaceholder.typicode.com/posts', // Пример API для тестирования
       messages: [],
       inputText: '',
       isSending: false,
       lastMessageTime: 0,
       messageQueue: [],
-      userId: null,
+      userId: 'anonymous', // Заглушка для userId
       config: {
         debounceTime: 300,
         maxMessagesPerMinute: 20,
@@ -78,10 +51,8 @@
             url: this.API_URL,
             headers: {
               'Content-Type': 'application/json',
-              'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content ?? '',
-              'X-Telegram-User': this.userId ?? 'anonymous',
+              'X-Telegram-User': this.userId,
             },
-            withCredentials: true,
             data,
           });
           return response.data;
@@ -116,6 +87,9 @@
           document.body.style.backgroundColor = tg.themeParams.bg_color ?? '#ffffff';
           tg.BackButton.show();
           tg.onEvent('backButtonClicked', () => tg.close());
+        } else {
+          console.log('Telegram.WebApp не доступен. Работаем в браузере.');
+          ChatModel.userId = 'browser-user'; // Заглушка для браузера
         }
       },
 
@@ -123,7 +97,12 @@
         try {
           ChatModel.isSending = true;
           m.redraw();
-          ChatModel.messages = await ChatModel.fetchAPI('get');
+          const data = await ChatModel.fetchAPI('get');
+          ChatModel.messages = data.slice(0, 10).map((post) => ({ // Пример обработки данных
+            text: post.title,
+            isUser: post.userId === ChatModel.userId,
+            isSystem: false,
+          }));
         } catch (error) {
           ChatModel.messages.push({ text: 'Ошибка загрузки', isSystem: true });
           console.error(error);
@@ -187,33 +166,33 @@
 
       view() {
         return m('div', {
-          class: 'w-full max-w-[800px] mx-auto min-h-screen grid grid-rows-[1fr_auto_auto] border-l-2 border-r-2 border-[var(--color-black)] bg-[var(--color-white)]',
+          class: 'w-full max-w-[800px] mx-auto min-h-screen grid grid-rows-[1fr_auto_auto] border-l-2 border-r-2 border-black bg-white',
         }, [
           m('div#messages', {
-            class: 'p-5 overflow-y-auto max-h-[calc(100vh-120px)] border-b-2 border-[var(--color-black)]',
+            class: 'p-5 overflow-y-auto max-h-[calc(100vh-120px)] border-b-2 border-black',
             'aria-live': 'polite',
           }, ChatModel.messages.map(msg =>
             m('div', {
               class: [
-                'mb-3 p-3 border-2 border-[var(--color-black)] border-l-6 text-[var(--font-size-base)] break-words',
-                msg.isUser ? 'bg-[var(--color-gray)] text-[var(--color-white)] ml-[10%]' :
-                msg.isSystem ? 'bg-[var(--color-white)] text-center border-dashed italic' :
-                'bg-[var(--color-light-gray)]',
+                'mb-3 p-3 border-2 border-black border-l-6 text-base break-words',
+                msg.isUser ? 'bg-gray-600 text-white ml-[10%]' :
+                msg.isSystem ? 'bg-white text-center border-dashed italic' :
+                'bg-gray-200',
               ].join(' '),
             }, msg.text)
           )),
           m('div#typing-indicator', {
-            class: `p-2 bg-[var(--color-white)] border-b-2 border-[var(--color-black)] ${ChatModel.isSending ? 'block' : 'hidden'}`,
+            class: `p-2 bg-white border-b-2 border-black ${ChatModel.isSending ? 'block' : 'hidden'}`,
           }, [
-            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-[var(--color-black)] animate-[blink_1.2s_infinite]' }),
-            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-[var(--color-black)] animate-[blink_1.2s_infinite_0.2s]' }),
-            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-[var(--color-black)] animate-[blink_1.2s_infinite_0.4s]' }),
+            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-black animate-[blink_1.2s_infinite]' }),
+            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-black animate-[blink_1.2s_infinite_0.2s]' }),
+            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-black animate-[blink_1.2s_infinite_0.4s]' }),
           ]),
           m('div', {
-            class: 'grid grid-cols-[1fr_auto] gap-2 p-2 bg-[var(--color-white)] border-b-2 border-[var(--color-black)]',
+            class: 'grid grid-cols-[1fr_auto] gap-2 p-2 bg-white border-b-2 border-black',
           }, [
             m('textarea#message-input', {
-              class: 'p-2 border-2 border-[var(--color-black)] bg-[var(--color-white)] font-[var(--font-mono)] text-[var(--font-size-base)] resize-none min-h-[40px] max-h-[120px] focus:outline-none focus:bg-[var(--color-light-gray)]',
+              class: 'p-2 border-2 border-black bg-white font-mono text-base resize-none min-h-[40px] max-h-[120px] focus:outline-none focus:bg-gray-100',
               placeholder: 'Сообщение',
               value: ChatModel.inputText,
               maxlength: 500,
@@ -227,7 +206,7 @@
               },
             }),
             m('button#send-button', {
-              class: 'p-[10px_20px] bg-[var(--color-black)] text-[var(--color-white)] border-2 border-[var(--color-black)] font-[var(--font-mono)] text-[var(--font-size-base)] cursor-pointer hover:-translate-x-0.5 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed transition-transform',
+              class: 'p-[10px_20px] bg-black text-white border-2 border-black font-mono text-base cursor-pointer hover:-translate-x-0.5 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed transition-transform',
               disabled: ChatModel.isSending,
               'aria-label': 'Отправить сообщение',
               onclick: ChatController.handleSend,
@@ -241,4 +220,3 @@
   </script>
 </body>
 </html>
-​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
