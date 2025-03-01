@@ -1,27 +1,245 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Встраиваемый чат</title>
-    <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            height: 100%;
-        }
-        iframe {
-            border: none;
-            width: 100%;
-            height: 100%;
-            min-height: 700px;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="robots" content="noindex, nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://unpkg.com https://telegram.org; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://telegram.org;">
+  <title>Чат</title>
+  <!-- Подключение Tailwind CSS 4.0 через UNPKG -->
+  <script src="https://unpkg.com/tailwindcss@4.0.0-alpha.17/dist/tailwindcss.js"></script>
+  <style type="text/tailwindcss">
+    @import "tailwindcss";
+
+    @theme {
+      --color-black: #1a1a1a;
+      --color-gray: #4a4a4a;
+      --color-light-gray: #d1d1d1;
+      --color-white: #ffffff;
+      --border-width-2: 2px;
+      --border-width-6: 6px;
+      --spacing-2: 8px;
+      --spacing-3: 12px;
+      --spacing-5: 20px;
+      --font-size-base: 16px;
+      --font-mono: "Courier New", monospace;
+    }
+
+    @layer base {
+      * {
+        @apply m-0 p-0 box-border;
+      }
+
+      body {
+        @apply font-[var(--font-mono)] bg-[var(--color-white)] text-[var(--color-black)] leading-relaxed;
+        -webkit-font-smoothing: none;
+        overscroll-behavior: none;
+      }
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 0.2; }
+      50% { opacity: 1; }
+    }
+  </style>
+  <!-- Подключение Telegram Mini App SDK через CDN -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Подключение Axios через CDN -->
+  <script src="https://unpkg.com/axios@1.6.7/dist/axios.min.js"></script>
 </head>
 <body>
-    <iframe
-        src="https://www.chatbase.co/chatbot-iframe/UYcSYkx-3TdBwHZrIyZYL"
-        title="Чат-бот Chatbase"
-    ></iframe>
+  <div id="app"></div>
+
+  <script type="module">
+    import m from 'https://unpkg.com/mithril@2.2.2/mithril.min.js';
+
+    const ChatModel = {
+      API_URL: '/api/messages',
+      messages: [],
+      inputText: '',
+      isSending: false,
+      lastMessageTime: 0,
+      messageQueue: [],
+      userId: null,
+      config: {
+        debounceTime: 300,
+        maxMessagesPerMinute: 20,
+        sanitizeRegex: /[<>&"']/g,
+      },
+
+      sanitizeInput(text) {
+        return text.replace(this.config.sanitizeRegex, '').trim().slice(0, 500);
+      },
+
+      async fetchAPI(method, data = null) {
+        try {
+          const response = await axios({
+            method,
+            url: this.API_URL,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content ?? '',
+              'X-Telegram-User': this.userId ?? 'anonymous',
+            },
+            withCredentials: true,
+            data,
+          });
+          return response.data;
+        } catch (error) {
+          throw new Error(`Axios error: ${error.response?.status || error.message}`);
+        }
+      },
+
+      debounce(fn, delay) {
+        let timeout;
+        return (...args) => {
+          clearTimeout(timeout);
+          timeout = setTimeout(() => fn(...args), delay);
+        };
+      },
+
+      rateLimit() {
+        const now = Date.now();
+        if (now - this.lastMessageTime < 60_000 / this.config.maxMessagesPerMinute) return false;
+        this.lastMessageTime = now;
+        return true;
+      },
+    };
+
+    const ChatController = {
+      initTelegram() {
+        if (window.Telegram?.WebApp) {
+          const tg = window.Telegram.WebApp;
+          tg.ready();
+          tg.expand();
+          ChatModel.userId = tg.initDataUnsafe?.user?.id ?? 'anonymous';
+          document.body.style.backgroundColor = tg.themeParams.bg_color ?? '#ffffff';
+          tg.BackButton.show();
+          tg.onEvent('backButtonClicked', () => tg.close());
+        }
+      },
+
+      async fetchMessages() {
+        try {
+          ChatModel.isSending = true;
+          m.redraw();
+          ChatModel.messages = await ChatModel.fetchAPI('get');
+        } catch (error) {
+          ChatModel.messages.push({ text: 'Ошибка загрузки', isSystem: true });
+          console.error(error);
+        } finally {
+          ChatModel.isSending = false;
+          m.redraw();
+          this.scrollToBottom();
+        }
+      },
+
+      async sendMessage(text) {
+        try {
+          ChatModel.isSending = true;
+          await ChatModel.fetchAPI('post', { text });
+          await this.fetchMessages();
+          ChatModel.inputText = '';
+        } catch (error) {
+          ChatModel.messages.push({ text: 'Ошибка отправки', isSystem: true });
+          console.error(error);
+        } finally {
+          ChatModel.isSending = false;
+          m.redraw();
+        }
+      },
+
+      startQueueProcessor() {
+        setInterval(async () => {
+          if (ChatModel.messageQueue.length && !ChatModel.isSending) {
+            const text = ChatModel.messageQueue.shift();
+            await this.sendMessage(text);
+          }
+        }, 100);
+      },
+
+      scrollToBottom() {
+        const messagesEl = document.querySelector('#messages');
+        if (messagesEl) {
+          messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+        }
+      },
+
+      handleInput(event) {
+        ChatModel.inputText = event.target.value;
+        event.target.style.height = 'auto';
+        event.target.style.height = `${Math.min(event.target.scrollHeight, 120)}px`;
+      },
+
+      handleSend: ChatModel.debounce(async function () {
+        const text = ChatModel.sanitizeInput(ChatModel.inputText);
+        if (!text || ChatModel.isSending || !ChatModel.rateLimit()) return;
+        ChatModel.messageQueue.push(text);
+      }, ChatModel.config.debounceTime),
+    };
+
+    const ChatView = {
+      oninit() {
+        ChatController.initTelegram();
+        ChatController.fetchMessages();
+        ChatController.startQueueProcessor();
+      },
+
+      view() {
+        return m('div', {
+          class: 'w-full max-w-[800px] mx-auto min-h-screen grid grid-rows-[1fr_auto_auto] border-l-2 border-r-2 border-[var(--color-black)] bg-[var(--color-white)]',
+        }, [
+          m('div#messages', {
+            class: 'p-5 overflow-y-auto max-h-[calc(100vh-120px)] border-b-2 border-[var(--color-black)]',
+            'aria-live': 'polite',
+          }, ChatModel.messages.map(msg =>
+            m('div', {
+              class: [
+                'mb-3 p-3 border-2 border-[var(--color-black)] border-l-6 text-[var(--font-size-base)] break-words',
+                msg.isUser ? 'bg-[var(--color-gray)] text-[var(--color-white)] ml-[10%]' :
+                msg.isSystem ? 'bg-[var(--color-white)] text-center border-dashed italic' :
+                'bg-[var(--color-light-gray)]',
+              ].join(' '),
+            }, msg.text)
+          )),
+          m('div#typing-indicator', {
+            class: `p-2 bg-[var(--color-white)] border-b-2 border-[var(--color-black)] ${ChatModel.isSending ? 'block' : 'hidden'}`,
+          }, [
+            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-[var(--color-black)] animate-[blink_1.2s_infinite]' }),
+            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-[var(--color-black)] animate-[blink_1.2s_infinite_0.2s]' }),
+            m('span', { class: 'inline-block w-2 h-2 mx-[5px] bg-[var(--color-black)] animate-[blink_1.2s_infinite_0.4s]' }),
+          ]),
+          m('div', {
+            class: 'grid grid-cols-[1fr_auto] gap-2 p-2 bg-[var(--color-white)] border-b-2 border-[var(--color-black)]',
+          }, [
+            m('textarea#message-input', {
+              class: 'p-2 border-2 border-[var(--color-black)] bg-[var(--color-white)] font-[var(--font-mono)] text-[var(--font-size-base)] resize-none min-h-[40px] max-h-[120px] focus:outline-none focus:bg-[var(--color-light-gray)]',
+              placeholder: 'Сообщение',
+              value: ChatModel.inputText,
+              maxlength: 500,
+              'aria-label': 'Ввод сообщения',
+              oninput: ChatController.handleInput,
+              onkeypress: (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  ChatController.handleSend();
+                }
+              },
+            }),
+            m('button#send-button', {
+              class: 'p-[10px_20px] bg-[var(--color-black)] text-[var(--color-white)] border-2 border-[var(--color-black)] font-[var(--font-mono)] text-[var(--font-size-base)] cursor-pointer hover:-translate-x-0.5 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed transition-transform',
+              disabled: ChatModel.isSending,
+              'aria-label': 'Отправить сообщение',
+              onclick: ChatController.handleSend,
+            }, '→'),
+          ]),
+        ]);
+      },
+    };
+
+    m.mount(document.getElementById('app'), ChatView);
+  </script>
 </body>
 </html>
+​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
